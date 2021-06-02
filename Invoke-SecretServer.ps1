@@ -26,7 +26,7 @@ The ouput of the Invoke-RestMethod call
 .EXAMPLE
 
 # Make a single call
-PS > Invoke-SecretServer.ps1 /api/v1/Discovery/status (Get-Credential) https://webserver/SecretServer
+PS > Invoke-SecretServer.ps1 /Discovery/status (Get-Credential) https://webserver/SecretServer
 
 .EXAMPLE
 
@@ -35,13 +35,13 @@ PS > $PSDefaultParameterValues['Invoke-SecretServer.ps1:Credential'] = Get-Crede
 PS > $PSDefaultParameterValues['Invoke-SecretServer.ps1:BaseUrl'] = 'https://webserver/SecretServer'
 # ...
 PS > # Then call the REST API using only the URI
-PS > Invoke-SecretServer.ps1 /api/v1/Discovery/status
+PS > Invoke-SecretServer.ps1 /Discovery/status
 
 .EXAMPLE
 
 # Provide $RequestBody via the Pipeline
 PS > @{ "data" = @{ "commandType" = "Discovery" } } | ConvertTo-Json |
->> .\Invoke-SecretServer.ps1 /api/v1/Discovery/run
+>> .\Invoke-SecretServer.ps1 /Discovery/run
 
 .NOTES
 
@@ -52,65 +52,69 @@ Copyright (c) 2020, The Migus Group, LLC. All rights reserved
 #>
 
 #region Parameters
-[CmdletBinding(DefaultParameterSetName = 'UserPass')]
+[CmdletBinding(DefaultParameterSetName='Credential')]
 Param(
-    # The Secret Server URI e.g. "/api/v1/Discovery/status"
+    # The Secret Server URI e.g. "/Discovery/status"
     [Parameter(Mandatory = $true, Position = 0)][Uri]$Uri,
 
+    # The base URL of the Secret Server e.g. "https://my.local/SecretServer/"
+    [Parameter(Mandatory = $true, Position = 1)][Uri]$BaseUrl,
+
+    # A Secret Server REST API (OAuth2) access_token
+    [Parameter(Mandatory = $true, ParameterSetName = 'AccessToken', Position = 2)][string]$AccessToken,
+
     # The Secret Server access Username
-    [Parameter(Mandatory = $true, ParameterSetName = "UserPass", Position = 1)][string]$Username,
+    [Parameter(Mandatory = $true, ParameterSetName = 'UserPass', Position = 2)][string]$Username,
 
     # The corresponding Password
-    [Parameter(Mandatory = $true, ParameterSetName = "UserPass", Position = 2)][SecureString]$Password,
+    [Parameter(Mandatory = $true, ParameterSetName = 'UserPass', Position = 3)][SecureString]$Password,
 
     # The Secret Server access Credential
-    [Parameter(Mandatory = $true, ParameterSetName = "Credential", Position = 1)][PSCredential]$Credential,
-
-    # The base URL of the Secret Server e.g. "https://servername/SecretServer"
-    [Uri]$BaseUrl = $env:TSS_URL,
-
+    [Parameter(Mandatory = $true, ParameterSetName = 'Credential', Position = 2)][PSCredential]$Credential,
     # HTTP request method e.g. POST
-    [ValidateSet('GET', 'POST', 'PUT', 'PATCH', 'DELETE')][string]$Method = 'GET',
+    [Parameter(Position = 3)][ValidateSet('GET', 'POST', 'PUT', 'PATCH', 'DELETE')][string]$Method = 'GET',
 
     # The body of the request for POST, PUT...
-    [Parameter(ValueFromPipeline = $true, Position = 3)][PSObject]$RequestBody
-)
+    [Parameter(Position = 4, ValueFromPipeline = $true)][PSObject]$Body,
 
-Write-Debug "BaseUrl is ${BaseUrl}"
+    [Parameter()][Uri]$ApiUri = '/api/v1',
+
+    [Parameter()][Uri]$TokenUri = '/oauth2/token'
+)
 #endregion
 
 #region Token Request
-if ($Credential) {
-    Write-Debug 'Setting Username and Password from $Credential'
-    $Username = $Credential.Username
+if ($PSCmdlet.ParameterSetName -eq 'Credential') {
+    $Username = $Credential.UserName
     $Password = $Credential.Password
 }
-Write-Debug "Username: ${Username} Password: $('*' * $Password.Length)"
-# Call /oauth2/token then extract the access_token from the response and use it to create a the Authorization header
-$InvokeRestMethodParameters = @{
-    Headers = @{ 'Authorization' = 'Bearer ' + (
-            Invoke-WebRequest -Body (@{
-                    'username'   = $Username
-                    'password'   = $Password | ConvertFrom-SecureString -AsPlainText
-                    'grant_type' = 'password'
-                }
-            ) -Method Post -Uri "${BaseUrl}/oauth2/token" -ErrorAction 'Stop' | ConvertFrom-Json).access_token
-    }
-    Method  = $Method
-    Uri = '{0}/{1}' -f $BaseUrl.ToString().TrimEnd('/'), $Uri.ToString().TrimStart('/')
+
+if ($PSCmdlet.ParameterSetName -in @('Credential', 'UserPass')) {
+    $AccessToken = (Invoke-WebRequest -Body (@{
+                'username'   = $Username
+                'password'   = $Password | ConvertFrom-SecureString -AsPlainText
+                'grant_type' = 'password'
+            }) -Method Post -Uri (
+            '{0}/{1}' -f $BaseUrl.ToString().TrimEnd('/'), $TokenUri.ToString().Trim('/')
+        ) -ErrorAction 'Stop' | ConvertFrom-Json | Select-Object -ExpandProperty 'access_token')
 }
 #endregion
 
 #region API Request
-if ($RequestBody) {
+$InvokeRestMethodParameters = @{
+    Headers = @{ 'Authorization' = 'Bearer ' + $AccessToken }
+    Method  = $Method
+    Uri     = '{0}/{1}/{2}' -f $BaseUrl.ToString().TrimEnd('/'), $ApiUri.ToString().Trim('/'), $Uri.ToString().TrimStart('/')
+}
+
+if ($Body) {
     if ('GET' -eq $Method) {
         Write-Debug 'Changing $Method from GET to POST because $RequestBody is present'
         $InvokeRestMethodParameters['Method'] = 'POST'
     }
-    Write-Debug 'Adding $RequestBody to the request'
-    $InvokeRestMethodParameters['Body'] = ConvertTo-Json $RequestBody
+    Write-Debug 'Sending JSON representation of $RequestBody'
+    $InvokeRestMethodParameters['Body'] = ConvertTo-Json $Body
     $InvokeRestMethodParameters['ContentType'] = 'application/json'
 }
-
 Invoke-RestMethod @InvokeRestMethodParameters
 #endregion
