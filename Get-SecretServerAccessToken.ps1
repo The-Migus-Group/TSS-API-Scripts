@@ -38,8 +38,8 @@ if ($PSCmdlet.ParameterSetName -eq 'Credential') {
     Write-Debug "Username is ${Username}; Domain is ${Domain}; Password is $($Password -replace '.', '*')"
 }
 
-# PowerShell prior to 7.x does not let you convert a secure string to the plaintext using ConvertFrom-SecureString. See:
-# https://stackoverflow.com/questions/60010511/powershell-error-when-converting-a-securestring-back-to-plain-text
+# PowerShell prior to 7.x does not let you convert a secure string to the plaintext using ConvertFrom-SecureString.
+# See: https://stackoverflow.com/questions/60010511/powershell-error-when-converting-a-securestring-back-to-plain-text
 $Body = @{
     'username'   = $Username
     'password'   = if ($PSVersionTable.PSVersion.Major -ge 7) {
@@ -57,8 +57,7 @@ if ($Domain) {
     Write-Debug 'Adding $Domain to the $Body'
 }
 Write-Debug "Body (except 'password') = $($Body | Select-Object -ExcludeProperty 'password')"
-Invoke-WebRequest -Uri $Uri -Method Post -Body $Body | ConvertFrom-Json
-| Select-Object -ExpandProperty 'access_token'
+Invoke-WebRequest -Uri $Uri -Method Post -Body $Body | ConvertFrom-Json | Select-Object -ExpandProperty 'access_token'
 #endregion
 
 # Copyright (c) 2021, The Migus Group, LLC. All rights reserved
